@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
   <meta name="robots" content="noindex, nofollow">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; object-src 'none'; script-src https://cdn.jsdelivr.net 'sha256-ZtmW3noANVBemP4z9eYI29cm2bK1g1Eo5XUa/2jryl8='; style-src 'unsafe-inline'; connect-src https://mzybytlhoxaiuuylgyur.supabase.co; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; object-src 'none'; script-src https://cdn.jsdelivr.net 'sha256-mbAYRnt3TA12C7wiPN45Z4baEt2MZX0PnR7I9yd3HLw='; style-src 'unsafe-inline'; connect-src https://mzybytlhoxaiuuylgyur.supabase.co; form-action 'none'">
   <title>Workspace access</title>
   <style>
     :root { color-scheme: light; font-family: system-ui, -apple-system, sans-serif; color: #152238; background: #f4f6f8; }
@@ -44,9 +44,14 @@
         <label for="password">Password</label>
         <input id="password" type="password" autocomplete="current-password" required>
         <button id="sign-in" type="submit">Sign in</button>
-        <button id="send-link" class="secondary" type="button">Email a sign-in link instead</button>
+        <button id="send-link" class="secondary" type="button">Email a six-digit sign-in code instead</button>
       </form>
       <p id="login-result" class="muted" role="status" aria-live="polite"></p>
+      <div id="email-code" hidden>
+        <label for="otp-code">Six-digit code from your email</label>
+        <input id="otp-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="123456">
+        <button id="verify-code" type="button">Verify code and sign in</button>
+      </div>
       <button id="resume" class="secondary" type="button">I have signed in — continue</button>
     </section>
     <section id="consent" hidden aria-label="Review access request">
@@ -84,6 +89,7 @@
     let canDecide = false;
     let sending = false;
     let signingIn = false;
+    let verifyingCode = false;
 
     function fail(message) {
       canDecide = false;
@@ -204,10 +210,37 @@
           options: { emailRedirectTo: callback.href, shouldCreateUser: false }
         });
         if (error) throw error;
-        el('login-result').textContent = 'Open the email link in this same browser. Then return here and tap Continue if necessary.';
+        el('email-code').hidden = false;
+        el('login-result').textContent = 'Enter the six-digit code from your email below. Do not open a magic link.';
       } catch (error) {
         el('login-result').textContent = error instanceof Error ? error.message : 'Unable to send a sign-in link.';
       } finally { sending = false; el('sign-in').disabled = el('send-link').disabled = false; }
+    });
+    el('verify-code').addEventListener('click', async () => {
+      if (!auth || verifyingCode || signingIn || sending) return;
+      const token = el('otp-code').value.trim();
+      const email = el('email').value.trim();
+      if (!el('email').reportValidity() || !/^[0-9]{6}$/.test(token)) {
+        el('login-result').textContent = 'Enter the six-digit code from your email.';
+        return;
+      }
+      verifyingCode = true;
+      el('verify-code').disabled = true;
+      clearError();
+      el('login-result').textContent = 'Verifying code…';
+      try {
+        const { data, error } = await auth.verifyOtp({ email, token, type: 'email' });
+        if (error || !data?.session) throw error || new Error('Code verification did not complete.');
+        el('otp-code').value = '';
+        el('login-result').textContent = '';
+        await load();
+      } catch (error) {
+        el('login-result').textContent = error instanceof Error ? error.message
+          : 'Unable to verify code. Request a new code only if necessary.';
+      } finally {
+        verifyingCode = false;
+        el('verify-code').disabled = false;
+      }
     });
     el('approve').addEventListener('click', () => decide(true));
     el('deny').addEventListener('click', () => decide(false));
