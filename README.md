@@ -42,3 +42,15 @@ The browser SDK is pinned to `@supabase/supabase-js` 2.117.2. The script has SHA
 Local syntax and 14 DOM/SDK-mock checks passed during preparation. They cover missing/duplicate requests, sign-in configuration, authenticated request display, approval, denial, redirect rejection, unavailable SDK, request mismatch, safe text rendering, prior-consent redirection, frame rejection, CSP consistency, and the public-content boundary. These are not evidence of a completed live OAuth connection.
 
 Status: frontend source prepared; GitHub Pages publishing and live OAuth acceptance must be verified separately.
+
+## Sign in with a six-digit email code (staging)
+
+Configure the staging **Supabase Auth → Email Templates → Magic Link** template to send a six-digit OTP code instead of a clickable one-time link. Replace the link containing `{{ .ConfirmationURL }}` with the token `{{ .Token }}`, for example:
+
+```html
+<h2>OpenBrain sign-in code</h2>
+<p>Enter this six-digit code on the OpenBrain staging authorization page:</p>
+<p><strong>{{ .Token }}</strong></p>
+```
+
+The page uses Supabase `signInWithOtp` to send the email, then `verifyOtp({ email, token, type: 'email' })` to sign in. This avoids email-scanner prefetch consuming a single-use link. Codes are single-use and subject to email rate limiting. Publishing the frontend alone does not modify the Supabase email template. Do not change production templates.
