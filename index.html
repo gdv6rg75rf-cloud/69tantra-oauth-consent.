@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
   <meta name="robots" content="noindex, nofollow">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; object-src 'none'; script-src https://cdn.jsdelivr.net 'sha256-zl8t2pVvEjmP4mxfLKSoWQYUYoML60qfgf4qhK0gcLs='; style-src 'unsafe-inline'; connect-src https://mzybytlhoxaiuuylgyur.supabase.co; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; object-src 'none'; script-src https://cdn.jsdelivr.net 'sha256-ZtmW3noANVBemP4z9eYI29cm2bK1g1Eo5XUa/2jryl8='; style-src 'unsafe-inline'; connect-src https://mzybytlhoxaiuuylgyur.supabase.co; form-action 'none'">
   <title>Workspace access</title>
   <style>
     :root { color-scheme: light; font-family: system-ui, -apple-system, sans-serif; color: #152238; background: #f4f6f8; }
@@ -101,8 +101,13 @@
     function returnToClient(rawUrl) {
       // Redirects come only from the authenticated provider response, never from query parameters.
       const destination = new URL(rawUrl);
-      if (destination.protocol !== 'https:' || destination.username || destination.password) {
-        throw new Error('The application returned an unsupported address. An HTTPS address is required.');
+      const isHttps = destination.protocol === 'https:';
+      // RFC 8252 allows native OAuth clients to receive redirects on ephemeral loopback ports.
+      const isLoopbackCallback = destination.protocol === 'http:' &&
+        (destination.hostname === '127.0.0.1' || destination.hostname === '[::1]') &&
+        destination.port !== '';
+      if ((!isHttps && !isLoopbackCallback) || destination.username || destination.password) {
+        throw new Error('The application returned an unsupported address. Use HTTPS or an HTTP loopback callback with an explicit port.');
       }
       window.location.assign(destination.href);
     }
