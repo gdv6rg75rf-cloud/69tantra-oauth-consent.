@@ -42,3 +42,17 @@ The browser SDK is pinned to `@supabase/supabase-js` 2.117.2. The script has SHA
 Local syntax and 14 DOM/SDK-mock checks passed during preparation. They cover missing/duplicate requests, sign-in configuration, authenticated request display, approval, denial, redirect rejection, unavailable SDK, request mismatch, safe text rendering, prior-consent redirection, frame rejection, CSP consistency, and the public-content boundary. These are not evidence of a completed live OAuth connection.
 
 Status: frontend source prepared; GitHub Pages publishing and live OAuth acceptance must be verified separately.
+
+## Password recovery without the unpublished GitHub Pages root
+
+The staging Supabase Auth project's `Site URL` currently resolves password recovery to `https://gdv6rg75rf-cloud.github.io/`, which has no published GitHub Pages site. Do not change the project-wide Site URL for this fix because the OAuth authorization path uses it.
+
+Instead, start recovery **from an OAuth authorization link** that opens `https://gdv6rg75rf-cloud.github.io/oauth-consent/?authorization_id=...`. The login form's **Forgot password? Send recovery email** button calls `resetPasswordForEmail` with the exact redirect:
+
+`https://gdv6rg75rf-cloud.github.io/oauth-consent/?flow=password-recovery`
+
+Ensure this exact redirect URL is allow-listed in staging Supabase **Authentication → URL Configuration → Redirect URLs**. The recovery page uses the existing PKCE-capable Supabase client to establish a session, shows a new-password form, and updates the existing signed-in user via `auth.updateUser({ password })`.
+
+Avoid using the Supabase Dashboard's **Send password recovery** action while the Site URL points to the unpublished root: that action does not supply this per-request redirect. Email security scanners may consume single-use recovery links before they reach the user; this change fixes the 404 and missing reset form, not prefetch behavior. For that separate problem, use code-based OTP after the staging SMTP/template setup is available.
+
+This frontend change does not alter Auth users, grants, project-wide URLs, or production.
