@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
   <meta name="robots" content="noindex, nofollow">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; object-src 'none'; script-src https://cdn.jsdelivr.net 'sha256-ZtmW3noANVBemP4z9eYI29cm2bK1g1Eo5XUa/2jryl8='; style-src 'unsafe-inline'; connect-src https://mzybytlhoxaiuuylgyur.supabase.co; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; object-src 'none'; script-src https://cdn.jsdelivr.net 'sha256-3RbPX8zKVD6gIm91Q+U8ji+bO0Npdle72lN9K+Kprjg='; style-src 'unsafe-inline'; connect-src https://mzybytlhoxaiuuylgyur.supabase.co; form-action 'none'">
   <title>Workspace access</title>
   <style>
     :root { color-scheme: light; font-family: system-ui, -apple-system, sans-serif; color: #152238; background: #f4f6f8; }
@@ -45,9 +45,21 @@
         <input id="password" type="password" autocomplete="current-password" required>
         <button id="sign-in" type="submit">Sign in</button>
         <button id="send-link" class="secondary" type="button">Email a sign-in link instead</button>
+        <button id="request-reset" class="secondary" type="button">Forgot password? Send recovery email</button>
       </form>
       <p id="login-result" class="muted" role="status" aria-live="polite"></p>
       <button id="resume" class="secondary" type="button">I have signed in — continue</button>
+    </section>
+    <section id="password-reset" hidden aria-label="Set new password">
+      <p id="reset-account" class="muted"></p>
+      <form id="password-reset-form">
+        <label for="new-password">New password</label>
+        <input id="new-password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required>
+        <label for="confirm-password">Confirm new password</label>
+        <input id="confirm-password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required>
+        <button id="save-password" type="submit">Save new password</button>
+      </form>
+      <p id="reset-result" class="muted" role="status" aria-live="polite"></p>
     </section>
     <section id="consent" hidden aria-label="Review access request">
       <p id="account" class="muted"></p>
@@ -78,12 +90,16 @@
     const parameters = new URL(window.location.href).searchParams;
     const ids = parameters.getAll('authorization_id');
     const authorizationId = ids.length === 1 ? ids[0] : '';
+    const isPasswordRecovery = parameters.get('flow') === 'password-recovery';
     let auth;
     let loading = false;
     let deciding = false;
     let canDecide = false;
     let sending = false;
     let signingIn = false;
+    let recovering = false;
+    let savingPassword = false;
+    let passwordSaved = false;
 
     function fail(message) {
       canDecide = false;
@@ -118,18 +134,30 @@
       clearError();
       el('consent').hidden = true;
       el('login').hidden = true;
-      el('status').textContent = 'Checking your sign-in…';
+      el('password-reset').hidden = true;
+      if (isPasswordRecovery && passwordSaved) return;
+      el('status').textContent = isPasswordRecovery ? 'Checking the recovery session…' : 'Checking your sign-in…';
       try {
         const { data: sessionData, error: sessionError } = await auth.getSession();
         if (sessionError) throw sessionError;
         if (!sessionData.session) {
-          el('status').textContent = 'Sign in to review this request.';
-          el('login').hidden = false;
+          if (isPasswordRecovery) {
+            fail('No valid recovery session was found. Start a fresh request from the authorization page and open that email in the same browser.');
+          } else {
+            el('status').textContent = 'Sign in to review this request.';
+            el('login').hidden = false;
+          }
           return;
         }
         // A cached session is not treated as authoritative identity verification.
         const { data: userData, error: userError } = await auth.getUser();
         if (userError || !userData.user) throw userError || new Error('Please sign in again.');
+        if (isPasswordRecovery) {
+          el('reset-account').textContent = 'Set a new password for ' + (userData.user.email || 'your account');
+          el('status').textContent = 'Recovery session verified. Set a new password below.';
+          el('password-reset').hidden = false;
+          return;
+        }
         const { data, error } = await auth.oauth.getAuthorizationDetails(authorizationId);
         if (error || !data) throw error || new Error('Authorization request not found. Start again from your application.');
         if (!('authorization_id' in data)) {
@@ -209,6 +237,54 @@
         el('login-result').textContent = error instanceof Error ? error.message : 'Unable to send a sign-in link.';
       } finally { sending = false; el('sign-in').disabled = el('send-link').disabled = false; }
     });
+    el('request-reset').addEventListener('click', async () => {
+      if (!auth || recovering || signingIn || sending || !el('email').reportValidity()) return;
+      recovering = true;
+      el('request-reset').disabled = true;
+      clearError();
+      el('login-result').textContent = 'Requesting password recovery…';
+      try {
+        const recoveryUrl = new URL(window.location.pathname, window.location.origin);
+        recoveryUrl.searchParams.set('flow', 'password-recovery');
+        const { error } = await auth.resetPasswordForEmail(el('email').value.trim(), {
+          redirectTo: recoveryUrl.href
+        });
+        if (error) throw error;
+        el('login-result').textContent = 'Recovery email requested. Open the newest email in this same browser. This site will show a new-password form.';
+      } catch (error) {
+        el('login-result').textContent = error instanceof Error ? error.message : 'Unable to request password recovery.';
+      } finally {
+        recovering = false;
+        el('request-reset').disabled = false;
+      }
+    });
+    el('password-reset-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (!auth || !isPasswordRecovery || savingPassword || !el('password-reset-form').reportValidity()) return;
+      const first = el('new-password').value;
+      const confirm = el('confirm-password').value;
+      if (first !== confirm) {
+        el('reset-result').textContent = 'Passwords do not match.';
+        return;
+      }
+      savingPassword = true;
+      el('save-password').disabled = true;
+      el('reset-result').textContent = 'Saving password…';
+      try {
+        const { error } = await auth.updateUser({ password: first });
+        if (error) throw error;
+        passwordSaved = true;
+        el('new-password').value = '';
+        el('confirm-password').value = '';
+        el('password-reset').hidden = true;
+        el('status').textContent = 'Password updated. Return to Codex, restart OpenBrain — Staging authentication, and sign in with your new password.';
+      } catch (error) {
+        el('reset-result').textContent = error instanceof Error ? error.message : 'Unable to update password.';
+      } finally {
+        savingPassword = false;
+        el('save-password').disabled = false;
+      }
+    });
     el('approve').addEventListener('click', () => decide(true));
     el('deny').addEventListener('click', () => decide(false));
     el('resume').addEventListener('click', load);
@@ -219,7 +295,7 @@
       if (error) fail(error.message); else await load();
     });
     if (window.top !== window.self) { fail('Open this page directly, not inside another website.'); return; }
-    if (!authorizationId || !/^[A-Za-z0-9_-]{1,256}$/.test(authorizationId)) {
+    if (!isPasswordRecovery && (!authorizationId || !/^[A-Za-z0-9_-]{1,256}$/.test(authorizationId))) {
       el('status').textContent = 'This page is ready to receive an authorization request. Start the connection from your application, not from this page.';
       return;
     }
@@ -233,7 +309,7 @@
       if (!auth.oauth?.getAuthorizationDetails) throw new Error('The sign-in library does not support authorization requests.');
       auth.onAuthStateChange((event) => {
         // Defer SDK calls until after its internal auth lock is released.
-        if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') window.setTimeout(load, 0);
+        if (event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'PASSWORD_RECOVERY') window.setTimeout(load, 0);
       });
       load();
     } catch (error) { fail(error instanceof Error ? error.message : 'Unable to initialize sign-in.'); }
